@@ -1,31 +1,16 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <algorithm>
-#include <cstring>
 
 using namespace std;
 
 const string DATA_FILE = "kv_store.dat";
 
-struct Record {
-    char key[65];
-    int value;
+unordered_map<string, vector<int>> dataMap;
 
-    Record() { key[0] = '\0'; value = 0; }
-    Record(const string& k, int v) {
-        strncpy(key, k.c_str(), 64);
-        key[64] = '\0';
-        value = v;
-    }
-
-    string getKey() const { return string(key); }
-};
-
-vector<Record> records;
-
-// Load data from disk
 void loadData() {
     ifstream fin(DATA_FILE, ios::binary);
     if (!fin.is_open()) {
@@ -33,22 +18,40 @@ void loadData() {
     }
 
     while (true) {
-        Record rec;
-        fin.read(rec.key, 65);
+        int keyLen;
+        fin.read(reinterpret_cast<char*>(&keyLen), sizeof(keyLen));
+        if (fin.eof() || keyLen <= 0 || keyLen > 64) break;
+
+        char keyBuf[65];
+        fin.read(keyBuf, keyLen);
         if (fin.eof()) break;
-        fin.read(reinterpret_cast<char*>(&rec.value), sizeof(rec.value));
+        keyBuf[keyLen] = '\0';
+
+        int value;
+        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
         if (fin.eof()) break;
-        records.push_back(rec);
+
+        dataMap[string(keyBuf)].push_back(value);
     }
     fin.close();
+
+    // Sort values for each key
+    for (auto& entry : dataMap) {
+        sort(entry.second.begin(), entry.second.end());
+    }
 }
 
-// Save data to disk
 void saveData() {
     ofstream fout(DATA_FILE, ios::binary | ios::trunc);
-    for (const auto& rec : records) {
-        fout.write(rec.key, 65);
-        fout.write(reinterpret_cast<const char*>(&rec.value), sizeof(rec.value));
+
+    for (const auto& entry : dataMap) {
+        const string& key = entry.first;
+        for (int value : entry.second) {
+            int keyLen = key.length();
+            fout.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
+            fout.write(key.c_str(), keyLen);
+            fout.write(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
     }
     fout.close();
 }
@@ -71,43 +74,37 @@ int main() {
             int value;
             cin >> key >> value;
 
-            // Check if already exists
-            bool found = false;
-            for (const auto& rec : records) {
-                if (rec.getKey() == key && rec.value == value) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                records.push_back(Record(key, value));
+            auto& values = dataMap[key];
+            // Use binary search since vector is kept sorted
+            auto it = lower_bound(values.begin(), values.end(), value);
+            if (it == values.end() || *it != value) {
+                values.insert(it, value);
             }
         } else if (cmd == "delete") {
             string key;
             int value;
             cin >> key >> value;
 
-            for (auto it = records.begin(); it != records.end(); ++it) {
-                if (it->getKey() == key && it->value == value) {
-                    records.erase(it);
-                    break;
+            auto mapIt = dataMap.find(key);
+            if (mapIt != dataMap.end()) {
+                auto& values = mapIt->second;
+                auto it = lower_bound(values.begin(), values.end(), value);
+                if (it != values.end() && *it == value) {
+                    values.erase(it);
+                    if (values.empty()) {
+                        dataMap.erase(mapIt);
+                    }
                 }
             }
         } else if (cmd == "find") {
             string key;
             cin >> key;
 
-            vector<int> values;
-            for (const auto& rec : records) {
-                if (rec.getKey() == key) {
-                    values.push_back(rec.value);
-                }
-            }
-
-            if (values.empty()) {
+            auto it = dataMap.find(key);
+            if (it == dataMap.end() || it->second.empty()) {
                 cout << "null\n";
             } else {
-                sort(values.begin(), values.end());
+                const auto& values = it->second;
                 for (size_t j = 0; j < values.size(); j++) {
                     if (j > 0) cout << " ";
                     cout << values[j];
