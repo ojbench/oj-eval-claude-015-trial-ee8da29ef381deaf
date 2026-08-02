@@ -1,41 +1,44 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <map>
-#include <set>
+#include <vector>
 #include <algorithm>
+#include <cstring>
 
 using namespace std;
 
 const string DATA_FILE = "kv_store.dat";
 
-// In-memory data structure
-map<string, set<int>> dataMap;
+struct Record {
+    char key[65];
+    int value;
+
+    Record() { key[0] = '\0'; value = 0; }
+    Record(const string& k, int v) {
+        strncpy(key, k.c_str(), 64);
+        key[64] = '\0';
+        value = v;
+    }
+
+    string getKey() const { return string(key); }
+};
+
+vector<Record> records;
 
 // Load data from disk
 void loadData() {
     ifstream fin(DATA_FILE, ios::binary);
     if (!fin.is_open()) {
-        return; // File doesn't exist yet
+        return;
     }
 
-    while (fin.peek() != EOF) {
-        // Read key length
-        int keyLen;
-        fin.read(reinterpret_cast<char*>(&keyLen), sizeof(keyLen));
+    while (true) {
+        Record rec;
+        fin.read(rec.key, 65);
         if (fin.eof()) break;
-
-        // Read key
-        char keyBuf[65];
-        fin.read(keyBuf, keyLen);
-        keyBuf[keyLen] = '\0';
-        string key(keyBuf);
-
-        // Read value
-        int value;
-        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
-
-        dataMap[key].insert(value);
+        fin.read(reinterpret_cast<char*>(&rec.value), sizeof(rec.value));
+        if (fin.eof()) break;
+        records.push_back(rec);
     }
     fin.close();
 }
@@ -43,19 +46,10 @@ void loadData() {
 // Save data to disk
 void saveData() {
     ofstream fout(DATA_FILE, ios::binary | ios::trunc);
-
-    for (const auto& entry : dataMap) {
-        const string& key = entry.first;
-        const set<int>& values = entry.second;
-
-        for (int value : values) {
-            int keyLen = key.length();
-            fout.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
-            fout.write(key.c_str(), keyLen);
-            fout.write(reinterpret_cast<const char*>(&value), sizeof(value));
-        }
+    for (const auto& rec : records) {
+        fout.write(rec.key, 65);
+        fout.write(reinterpret_cast<const char*>(&rec.value), sizeof(rec.value));
     }
-
     fout.close();
 }
 
@@ -63,7 +57,6 @@ int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    // Load existing data
     loadData();
 
     int n;
@@ -77,37 +70,53 @@ int main() {
             string key;
             int value;
             cin >> key >> value;
-            dataMap[key].insert(value);
+
+            // Check if already exists
+            bool found = false;
+            for (const auto& rec : records) {
+                if (rec.getKey() == key && rec.value == value) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                records.push_back(Record(key, value));
+            }
         } else if (cmd == "delete") {
             string key;
             int value;
             cin >> key >> value;
-            auto it = dataMap.find(key);
-            if (it != dataMap.end()) {
-                it->second.erase(value);
-                if (it->second.empty()) {
-                    dataMap.erase(it);
+
+            for (auto it = records.begin(); it != records.end(); ++it) {
+                if (it->getKey() == key && it->value == value) {
+                    records.erase(it);
+                    break;
                 }
             }
         } else if (cmd == "find") {
             string key;
             cin >> key;
-            auto it = dataMap.find(key);
-            if (it == dataMap.end() || it->second.empty()) {
+
+            vector<int> values;
+            for (const auto& rec : records) {
+                if (rec.getKey() == key) {
+                    values.push_back(rec.value);
+                }
+            }
+
+            if (values.empty()) {
                 cout << "null\n";
             } else {
-                bool first = true;
-                for (int value : it->second) {
-                    if (!first) cout << " ";
-                    cout << value;
-                    first = false;
+                sort(values.begin(), values.end());
+                for (size_t j = 0; j < values.size(); j++) {
+                    if (j > 0) cout << " ";
+                    cout << values[j];
                 }
                 cout << "\n";
             }
         }
     }
 
-    // Save data back to disk
     saveData();
 
     return 0;
