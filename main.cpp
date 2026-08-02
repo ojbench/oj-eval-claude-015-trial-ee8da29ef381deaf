@@ -1,66 +1,99 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <unordered_map>
 #include <vector>
 #include <algorithm>
+#include <cstring>
 
 using namespace std;
 
 const string DATA_FILE = "kv_store.dat";
 
-unordered_map<string, vector<int>> dataMap;
+struct Record {
+    int keyLen;
+    char key[65];
+    int value;
+    char deleted;
+};
 
-void loadData() {
+void insertKV(const string& key, int value) {
+    // First check if it already exists
     ifstream fin(DATA_FILE, ios::binary);
-    if (!fin.is_open()) {
-        return;
+    if (fin.is_open()) {
+        Record rec;
+        while (fin.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
+            string existingKey(rec.key, rec.keyLen);
+            if (existingKey == key && rec.value == value && !rec.deleted) {
+                fin.close();
+                return; // Already exists
+            }
+        }
+        fin.close();
     }
 
-    while (true) {
-        int keyLen;
-        fin.read(reinterpret_cast<char*>(&keyLen), sizeof(keyLen));
-        if (fin.eof() || keyLen <= 0 || keyLen > 64) break;
-
-        char keyBuf[65];
-        fin.read(keyBuf, keyLen);
-        if (fin.eof()) break;
-        keyBuf[keyLen] = '\0';
-
-        int value;
-        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
-        if (fin.eof()) break;
-
-        dataMap[string(keyBuf)].push_back(value);
-    }
-    fin.close();
-
-    // Sort values for each key
-    for (auto& entry : dataMap) {
-        sort(entry.second.begin(), entry.second.end());
-    }
+    // Append new record
+    ofstream fout(DATA_FILE, ios::binary | ios::app);
+    Record rec;
+    rec.keyLen = key.length();
+    memcpy(rec.key, key.c_str(), rec.keyLen);
+    memset(rec.key + rec.keyLen, 0, 65 - rec.keyLen);
+    rec.value = value;
+    rec.deleted = 0;
+    fout.write(reinterpret_cast<const char*>(&rec), sizeof(Record));
+    fout.close();
 }
 
-void saveData() {
-    ofstream fout(DATA_FILE, ios::binary | ios::trunc);
+void deleteKV(const string& key, int value) {
+    fstream fio(DATA_FILE, ios::binary | ios::in | ios::out);
+    if (!fio.is_open()) return;
 
-    for (const auto& entry : dataMap) {
-        const string& key = entry.first;
-        for (int value : entry.second) {
-            int keyLen = key.length();
-            fout.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
-            fout.write(key.c_str(), keyLen);
-            fout.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    Record rec;
+    while (fio.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
+        string existingKey(rec.key, rec.keyLen);
+        if (existingKey == key && rec.value == value && !rec.deleted) {
+            // Mark as deleted
+            streampos pos = fio.tellg();
+            pos -= static_cast<streamoff>(sizeof(Record));
+            fio.seekp(pos + static_cast<streamoff>(offsetof(Record, deleted)));
+            char deleted = 1;
+            fio.write(&deleted, sizeof(deleted));
+            fio.close();
+            return;
         }
     }
-    fout.close();
+    fio.close();
+}
+
+void findKV(const string& key) {
+    vector<int> values;
+
+    ifstream fin(DATA_FILE, ios::binary);
+    if (fin.is_open()) {
+        Record rec;
+        while (fin.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
+            string existingKey(rec.key, rec.keyLen);
+            if (existingKey == key && !rec.deleted) {
+                values.push_back(rec.value);
+            }
+        }
+        fin.close();
+    }
+
+    if (values.empty()) {
+        cout << "null\n";
+    } else {
+        sort(values.begin(), values.end());
+        for (size_t i = 0; i < values.size(); i++) {
+            if (i > 0) cout << " ";
+            cout << values[i];
+        }
+        cout << "\n";
+    }
 }
 
 int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
-
-    loadData();
 
     int n;
     cin >> n;
@@ -73,48 +106,18 @@ int main() {
             string key;
             int value;
             cin >> key >> value;
-
-            auto& values = dataMap[key];
-            // Use binary search since vector is kept sorted
-            auto it = lower_bound(values.begin(), values.end(), value);
-            if (it == values.end() || *it != value) {
-                values.insert(it, value);
-            }
+            insertKV(key, value);
         } else if (cmd == "delete") {
             string key;
             int value;
             cin >> key >> value;
-
-            auto mapIt = dataMap.find(key);
-            if (mapIt != dataMap.end()) {
-                auto& values = mapIt->second;
-                auto it = lower_bound(values.begin(), values.end(), value);
-                if (it != values.end() && *it == value) {
-                    values.erase(it);
-                    if (values.empty()) {
-                        dataMap.erase(mapIt);
-                    }
-                }
-            }
+            deleteKV(key, value);
         } else if (cmd == "find") {
             string key;
             cin >> key;
-
-            auto it = dataMap.find(key);
-            if (it == dataMap.end() || it->second.empty()) {
-                cout << "null\n";
-            } else {
-                const auto& values = it->second;
-                for (size_t j = 0; j < values.size(); j++) {
-                    if (j > 0) cout << " ";
-                    cout << values[j];
-                }
-                cout << "\n";
-            }
+            findKV(key);
         }
     }
-
-    saveData();
 
     return 0;
 }
