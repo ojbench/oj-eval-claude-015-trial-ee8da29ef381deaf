@@ -1,99 +1,61 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <vector>
+#include <map>
+#include <set>
 #include <algorithm>
-#include <cstring>
 
 using namespace std;
 
 const string DATA_FILE = "kv_store.dat";
 
-struct Record {
-    int keyLen;
-    char key[65];
-    int value;
-    char deleted;
-};
+map<string, set<int>> dataMap;
 
-void insertKV(const string& key, int value) {
-    // First check if it already exists
+void loadData() {
     ifstream fin(DATA_FILE, ios::binary);
-    if (fin.is_open()) {
-        Record rec;
-        while (fin.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
-            string existingKey(rec.key, rec.keyLen);
-            if (existingKey == key && rec.value == value && !rec.deleted) {
-                fin.close();
-                return; // Already exists
-            }
-        }
-        fin.close();
+    if (!fin.is_open()) {
+        return;
     }
 
-    // Append new record
-    ofstream fout(DATA_FILE, ios::binary | ios::app);
-    Record rec;
-    rec.keyLen = key.length();
-    memcpy(rec.key, key.c_str(), rec.keyLen);
-    memset(rec.key + rec.keyLen, 0, 65 - rec.keyLen);
-    rec.value = value;
-    rec.deleted = 0;
-    fout.write(reinterpret_cast<const char*>(&rec), sizeof(Record));
+    while (true) {
+        unsigned char keyLen;
+        fin.read(reinterpret_cast<char*>(&keyLen), 1);
+        if (fin.eof() || keyLen == 0 || keyLen > 64) break;
+
+        char keyBuf[65];
+        fin.read(keyBuf, keyLen);
+        if (fin.eof()) break;
+
+        int value;
+        fin.read(reinterpret_cast<char*>(&value), sizeof(value));
+        if (fin.eof()) break;
+
+        dataMap[string(keyBuf, keyLen)].insert(value);
+    }
+    fin.close();
+}
+
+void saveData() {
+    ofstream fout(DATA_FILE, ios::binary | ios::trunc);
+
+    for (const auto& entry : dataMap) {
+        const string& key = entry.first;
+        unsigned char keyLen = key.length();
+
+        for (int value : entry.second) {
+            fout.write(reinterpret_cast<const char*>(&keyLen), 1);
+            fout.write(key.c_str(), keyLen);
+            fout.write(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
+    }
     fout.close();
-}
-
-void deleteKV(const string& key, int value) {
-    fstream fio(DATA_FILE, ios::binary | ios::in | ios::out);
-    if (!fio.is_open()) return;
-
-    Record rec;
-    while (fio.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
-        string existingKey(rec.key, rec.keyLen);
-        if (existingKey == key && rec.value == value && !rec.deleted) {
-            // Mark as deleted
-            streampos pos = fio.tellg();
-            pos -= static_cast<streamoff>(sizeof(Record));
-            fio.seekp(pos + static_cast<streamoff>(offsetof(Record, deleted)));
-            char deleted = 1;
-            fio.write(&deleted, sizeof(deleted));
-            fio.close();
-            return;
-        }
-    }
-    fio.close();
-}
-
-void findKV(const string& key) {
-    vector<int> values;
-
-    ifstream fin(DATA_FILE, ios::binary);
-    if (fin.is_open()) {
-        Record rec;
-        while (fin.read(reinterpret_cast<char*>(&rec), sizeof(Record))) {
-            string existingKey(rec.key, rec.keyLen);
-            if (existingKey == key && !rec.deleted) {
-                values.push_back(rec.value);
-            }
-        }
-        fin.close();
-    }
-
-    if (values.empty()) {
-        cout << "null\n";
-    } else {
-        sort(values.begin(), values.end());
-        for (size_t i = 0; i < values.size(); i++) {
-            if (i > 0) cout << " ";
-            cout << values[i];
-        }
-        cout << "\n";
-    }
 }
 
 int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
+
+    loadData();
 
     int n;
     cin >> n;
@@ -102,22 +64,41 @@ int main() {
         string cmd;
         cin >> cmd;
 
-        if (cmd == "insert") {
+        if (cmd[0] == 'i') {  // insert
             string key;
             int value;
             cin >> key >> value;
-            insertKV(key, value);
-        } else if (cmd == "delete") {
+            dataMap[key].insert(value);
+        } else if (cmd[0] == 'd') {  // delete
             string key;
             int value;
             cin >> key >> value;
-            deleteKV(key, value);
-        } else if (cmd == "find") {
+            auto it = dataMap.find(key);
+            if (it != dataMap.end()) {
+                it->second.erase(value);
+                if (it->second.empty()) {
+                    dataMap.erase(it);
+                }
+            }
+        } else {  // find
             string key;
             cin >> key;
-            findKV(key);
+            auto it = dataMap.find(key);
+            if (it == dataMap.end() || it->second.empty()) {
+                cout << "null\n";
+            } else {
+                bool first = true;
+                for (int value : it->second) {
+                    if (!first) cout << " ";
+                    cout << value;
+                    first = false;
+                }
+                cout << "\n";
+            }
         }
     }
+
+    saveData();
 
     return 0;
 }
